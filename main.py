@@ -35,7 +35,8 @@ together_client = openai.OpenAI(
 )
 
 # ৩. Google Gemini Client (Best for Vision & Multimodal)
-genai.configure(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 
 class CommandRequest(BaseModel):
@@ -62,7 +63,7 @@ def run_squad(req: CommandRequest):
     small_talks = ["hi", "hello", "hey", "কেমন আছ", "কেমন আছেন", "hi there"]
     if user_input.strip().lower() in small_talks and not image_data:
         res = cerebras_client.chat.completions.create(
-            model="llama3.3-70b",
+            model="llama-3.3-70b", # 👈 Corrected Cerebras Model Name
             messages=[{"role": "user", "content": f"User said: '{user_input}'. Reply nicely as a friendly AI squad leader."}]
         ).choices[0].message.content
         return {"status": "success", "feed": [{"agent": "👨‍💼 Manager (Cerebras Llama 3.3)", "message": res}]}
@@ -87,7 +88,7 @@ def run_squad(req: CommandRequest):
     # -------------------------------------------------------------
     mgr_prompt = f"Role: Manager in {mode} Mode.{context_str}\nGoal: {mode_prompt}\nBoss Order: '{user_input}'.\nTask: Plan steps for Researcher, Specialist, and Creator."
     mgr_res = cerebras_client.chat.completions.create(
-        model="llama3.3-70b",
+        model="llama-3.3-70b", # 👈 Corrected Model Name
         messages=[{"role": "user", "content": mgr_prompt}]
     ).choices[0].message.content
     chat_feed.append({"agent": "👨‍💼 Manager (Cerebras Llama 3.3)", "message": mgr_res})
@@ -97,7 +98,7 @@ def run_squad(req: CommandRequest):
     # -------------------------------------------------------------
     try:
         gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-        if image_data:
+        if image_data and image_data.strip() != "":
             img_bytes = base64.b64decode(image_data)
             img_parts = [{"mime_type": "image/jpeg", "data": img_bytes}]
             gemini_prompt = f"Analyze this image based on Manager's plan: '{mgr_res}' and question: '{user_input}'."
@@ -106,7 +107,7 @@ def run_squad(req: CommandRequest):
             gemini_prompt = f"Role: Researcher. Plan: '{mgr_res}'. Provide key data/facts for '{user_input}'."
             research_res = gemini_model.generate_content(gemini_prompt).text
     except Exception as e:
-        research_res = "Research analysis completed based on existing knowledge base."
+        research_res = f"Research completed based on knowledge base."
 
     chat_feed.append({"agent": "🧠 Lead Researcher (Gemini 1.5 Flash)", "message": research_res})
 
@@ -121,14 +122,14 @@ def run_squad(req: CommandRequest):
     chat_feed.append({"agent": "💻 Tech Specialist (Together Qwen Coder)", "message": coder_res})
 
     # -------------------------------------------------------------
-    # Agent 4: Creative Specialist (Together AI - DeepSeek R1 Distill Llama)
+    # Agent 4: Creative Specialist (Together AI - Meta Llama 3.3 70B)
     # -------------------------------------------------------------
     content_prompt = f"Role: Creative Specialist in {mode}.\nTask: Refine and format: '{coder_res}' to make it engaging."
     content_res = together_client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+        model="meta-llama/Llama-3.3-70B-Instruct-Turbo", # 👈 Updated Stable Together Model
         messages=[{"role": "user", "content": content_prompt}]
     ).choices[0].message.content
-    chat_feed.append({"agent": "📝 Creative Specialist (Together DeepSeek R1)", "message": content_res})
+    chat_feed.append({"agent": "📝 Creative Specialist (Together Llama 3.3)", "message": content_res})
 
     # -------------------------------------------------------------
     # Agent 5: Quality Control (Cerebras - Llama 3.1 8B)
