@@ -33,18 +33,25 @@ class CommandRequest(BaseModel):
     user_command: str
     selected_mode: str
     image_base64: Optional[str] = None
+    file_content: Optional[str] = None  # Text extracted from uploaded files
     chat_history: Optional[str] = ""
-    active_agents: Optional[List[str]] = None  # Dynamic Agent selection list
+    active_agents: Optional[List[str]] = None
 
 @app.get("/")
 def home():
     return {"status": "TaskSquad AI Multi-Provider Server is Live!"}
+
+# Server Health Check Endpoint (For Ping Indicator)
+@app.get("/health")
+def health_check():
+    return {"status": "online"}
 
 @app.post("/run-squad")
 def run_squad(req: CommandRequest):
     user_input = req.user_command or "Hello"
     mode = req.selected_mode or "All Rounder"
     image_data = req.image_base64
+    file_text = req.file_content
     history = req.chat_history or ""
     enabled_agents = req.active_agents or ["manager", "researcher", "tech", "creative", "qc"]
     chat_feed = []
@@ -62,6 +69,11 @@ def run_squad(req: CommandRequest):
     }
 
     mode_prompt = system_instructions.get(mode, "Handle this efficiently.")
+    
+    # Merge file content into prompt if uploaded
+    if file_text:
+        user_input += f"\n\n[Attached File Content]:\n{file_text}"
+        
     context_str = f"\nPrevious History: {history}\n" if history else ""
 
     mgr_res = "User request direct execution."
