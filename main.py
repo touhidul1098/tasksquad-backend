@@ -1,11 +1,16 @@
 import os
 import base64
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import openai
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+
+# Logging setup for debugging in Render
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
@@ -17,27 +22,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Environment Variables থেকে API Keys আনা
+# API Keys setup
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# ১. Cerebras Client (Ultra Fast Speed)
+# Clients Initialize
 cerebras_client = openai.OpenAI(
     base_url="https://api.cerebras.ai/v1",
     api_key=CEREBRAS_API_KEY
 )
 
-# ২. Together AI Client
 together_client = openai.OpenAI(
     base_url="https://api.together.xyz/v1",
     api_key=TOGETHER_API_KEY
 )
 
-# ৩. Google Gemini Client
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
+# Google GenAI Client (Updated Official SDK)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 class CommandRequest(BaseModel):
     user_command: str
@@ -45,11 +47,9 @@ class CommandRequest(BaseModel):
     image_base64: Optional[str] = None
     chat_history: Optional[str] = ""
 
-
 @app.get("/")
 def home():
     return {"status": "TaskSquad AI Multi-Provider Server is Live!"}
-
 
 @app.post("/run-squad")
 def run_squad(req: CommandRequest):
@@ -59,7 +59,7 @@ def run_squad(req: CommandRequest):
     history = req.chat_history
     chat_feed = []
 
-    # স্মল টক ফিল্টার (Cerebras Llama 3.3 70B দিয়ে দ্রুত রেসপন্স)
+    # Small Talk Filter (Cerebras)
     small_talks = ["hi", "hello", "hey", "কেমন আছ", "কেমন আছেন", "hi there"]
     if user_input.strip().lower() in small_talks and not image_data:
         try:
@@ -67,7 +67,8 @@ def run_squad(req: CommandRequest):
                 model="llama-3.3-70b",
                 messages=[{"role": "user", "content": f"User said: '{user_input}'. Reply nicely as a friendly AI squad leader."}]
             ).choices[0].message.content
-        except Exception:
+        except Exception as e:
+            logging.error(f"Cerebras Small Talk Error: {e}")
             res = "Hello! I am your TaskSquad AI Manager. How can I assist you today?"
         return {"status": "success", "feed": [{"agent": "👨‍💼 Manager (Cerebras Llama 3.3)", "message": res}]}
 
@@ -86,42 +87,48 @@ def run_squad(req: CommandRequest):
     mode_prompt = system_instructions.get(mode, "Handle this efficiently.")
     context_str = f"\nPrevious Context: {history}\n" if history else ""
 
-    # -------------------------------------------------------------
-    # Agent 1: Manager (Cerebras - Llama 3.3 70B) ⚡ Super Powerful & Fast
-    # -------------------------------------------------------------
+    # Agent 1: Manager (Cerebras)
     try:
-        mgr_prompt = f"Role: Senior AI Manager in {mode} Mode.{context_str}\nGoal: {mode_prompt}\nUser Request: '{user_input}'.\nTask: Break down the request and create an actionable step-by-step strategic plan for Researcher, Specialist, and Creator."
+        mgr_prompt = f"Role: Senior AI Manager in {mode} Mode.{context_str}\nGoal: {mode_prompt}\nUser Request: '{user_input}'.\nTask: Break down the request and create an actionable step-by-step strategic plan."
         mgr_res = cerebras_client.chat.completions.create(
             model="llama-3.3-70b",
             messages=[{"role": "user", "content": mgr_prompt}]
         ).choices[0].message.content
     except Exception as e:
+        logging.error(f"Manager Error: {e}")
         mgr_res = f"Plan: Process the request '{user_input}' carefully step by step."
 
     chat_feed.append({"agent": "👨‍💼 Manager (Cerebras Llama 3.3 70B)", "message": mgr_res})
 
-    # -------------------------------------------------------------
-    # Agent 2: Lead Researcher (Google Gemini 1.5 Flash)
-    # -------------------------------------------------------------
+    # Agent 2: Lead Researcher (Gemini 2.5 Flash)
     try:
-        gemini_model = genai.GenerativeModel("gemini-1.5-flash")
         if image_data and len(image_data.strip()) > 10:
             clean_image_data = image_data.split(",")[1] if "," in image_data else image_data
             img_bytes = base64.b64decode(clean_image_data)
-            img_parts = [{"mime_type": "image/jpeg", "data": img_bytes}]
-            gemini_prompt = f"Analyze this image based on Manager's plan: '{mgr_res}' and question: '{user_input}'."
-            research_res = gemini_model.generate_content([gemini_prompt, img_parts[0]]).text
+            
+            # Using updated SDK format for image + text
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[
+                    types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                    f"Analyze this image based on Manager's plan: '{mgr_res}' and question: '{user_input}'."
+                ]
+            )
+            research_res = response.text
         else:
             gemini_prompt = f"Role: Researcher. Plan: '{mgr_res}'. Provide key data/facts for '{user_input}'."
-            research_res = gemini_model.generate_content(gemini_prompt).text
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=gemini_prompt
+            )
+            research_res = response.text
     except Exception as e:
+        logging.error(f"Gemini Error: {e}")
         research_res = "Research completed based on available domain knowledge."
 
-    chat_feed.append({"agent": "🧠 Lead Researcher (Gemini 1.5 Flash)", "message": research_res})
+    chat_feed.append({"agent": "🧠 Lead Researcher (Gemini 2.5 Flash)", "message": research_res})
 
-    # -------------------------------------------------------------
-    # Agent 3: Tech Specialist (Together AI - Meta Llama 3.1 70B)
-    # -------------------------------------------------------------
+    # Agent 3: Tech Specialist (Together AI Llama 3.1)
     try:
         coder_prompt = f"Role: Technical Expert in {mode}.\nPlan: '{mgr_res}'\nResearch: '{research_res}'.\nTask: Deliver main solution or code for '{user_input}'."
         coder_res = together_client.chat.completions.create(
@@ -129,13 +136,12 @@ def run_squad(req: CommandRequest):
             messages=[{"role": "user", "content": coder_prompt}]
         ).choices[0].message.content
     except Exception as e:
+        logging.error(f"Tech Specialist Error: {e}")
         coder_res = f"Solution generated for '{user_input}' following system specifications."
 
     chat_feed.append({"agent": "💻 Tech Specialist (Together Llama 3.1 70B)", "message": coder_res})
 
-    # -------------------------------------------------------------
-    # Agent 4: Creative Specialist (Together AI - Qwen 2.5 72B)
-    # -------------------------------------------------------------
+    # Agent 4: Creative Specialist (Together AI Qwen 2.5)
     try:
         content_prompt = f"Role: Creative Specialist in {mode}.\nTask: Refine and format: '{coder_res}' to make it engaging."
         content_res = together_client.chat.completions.create(
@@ -143,13 +149,12 @@ def run_squad(req: CommandRequest):
             messages=[{"role": "user", "content": content_prompt}]
         ).choices[0].message.content
     except Exception as e:
+        logging.error(f"Creative Specialist Error: {e}")
         content_res = coder_res
 
     chat_feed.append({"agent": "📝 Creative Specialist (Together Qwen 72B)", "message": content_res})
 
-    # -------------------------------------------------------------
-    # Agent 5: Quality Control (Cerebras - Llama 3.3 70B)
-    # -------------------------------------------------------------
+    # Agent 5: Quality Control (Cerebras)
     try:
         qc_prompt = f"Role: Quality Controller.\nReview final output: '{content_res}'.\nProvide summary and approval."
         qc_res = cerebras_client.chat.completions.create(
@@ -157,6 +162,7 @@ def run_squad(req: CommandRequest):
             messages=[{"role": "user", "content": qc_prompt}]
         ).choices[0].message.content
     except Exception as e:
+        logging.error(f"QC Agent Error: {e}")
         qc_res = "Quality check complete. Solution verified and approved!"
 
     chat_feed.append({"agent": "🛡️ QC Agent (Cerebras Llama 3.3)", "message": qc_res})
