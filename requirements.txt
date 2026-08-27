@@ -1,4 +1,5 @@
 fastapi
 uvicorn
 openai
-google-generativeai
+google-genai
+pillow
